@@ -1,0 +1,68 @@
+name: Build JAR
+
+on:
+  push:
+  workflow_dispatch: # bisa dijalankan manual: tab Actions > Build JAR > Run workflow
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Ambil kode
+        uses: actions/checkout@v7
+
+      - name: Cari proyek (bongkar zip kalau perlu)
+        run: |
+          # Kalau file Gradle belum ada, bongkar semua .zip di repo (zip di dalam zip juga)
+          if [ -z "$(find . -name settings.gradle -not -path './.git/*' -print -quit)" ]; then
+            echo "settings.gradle belum ada, mencoba membongkar file .zip..."
+            mkdir -p _proyek
+            for ronde in 1 2 3; do
+              zips=$(find . -name '*.zip' -type f -not -path './.git/*')
+              [ -z "$zips" ] && break
+              echo "$zips" | while IFS= read -r z; do
+                echo "Membongkar: $z"
+                unzip -q -o "$z" -d _proyek || echo "Peringatan saat membongkar $z"
+                mv "$z" "$z.sudah"
+              done
+            done
+          fi
+          settings=$(find . -name settings.gradle -not -path './.git/*' | head -n 1)
+          if [ -z "$settings" ]; then
+            echo "::error::settings.gradle tidak ketemu. Upload file proyek (atau zip-nya) ke repo dulu."
+            exit 1
+          fi
+          dir=$(realpath --relative-to=. "$(dirname "$settings")")
+          echo "Proyek ada di: $dir"
+          echo "PROJECT_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: Pasang JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Pasang Gradle 8.14.3
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: 8.14.3
+          cache-provider: basic
+          # gradle-wrapper.jar di proyek ini versi ringkas buatan sendiri, bukan yang resmi.
+          # Pengecekan wrapper harus dimatikan, kalau tidak job langsung gagal.
+          validate-wrappers: false
+
+      - name: Build
+        run: |
+          cd "$PROJECT_DIR"
+          gradle build
+
+      - name: Simpan JAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: shazammod-jar
+          path: ${{ env.PROJECT_DIR }}/build/libs/*.jar
+          if-no-files-found: error
